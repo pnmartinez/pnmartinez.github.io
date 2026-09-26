@@ -7,6 +7,8 @@ let config;
 let worker;
 const bytes = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
 const base64 = value => btoa(String.fromCharCode(...new Uint8Array(value)));
+// gate.html hides the page while a saved session may restore silently; show it once that is off the table.
+const reveal = () => document.documentElement.classList.remove('restoring');
 
 function rpc(message) {
   return new Promise((resolve, reject) => {
@@ -70,6 +72,7 @@ async function prepare() {
   } else if (saved && saved.build === config.id && saved.expires > Date.now()) {
     try {await enter(saved.key, saved.expires); return;} catch {sessionStorage.removeItem(STORAGE);}
   }
+  reveal();
   button.disabled = false;
   button.textContent = 'Entrar al archivo';
 }
@@ -91,4 +94,4 @@ form.addEventListener('submit', async event => {
     document.querySelector('#password').focus();
   }
 });
-prepare().catch(error => {status.textContent = error.message; button.textContent = 'Recarga para reintentar';});
+prepare().catch(error => {reveal(); status.textContent = error.message; button.textContent = 'Recarga para reintentar';});
