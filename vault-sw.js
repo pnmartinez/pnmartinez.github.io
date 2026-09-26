@@ -1,5 +1,5 @@
 'use strict';
-const BUILD = '65ba790be934dcaf53cdcd13fdaded08';
+const BUILD = 'c5f5f458bc607e30a2a859e7ac3a0320';
 const MAX_SESSION = 8 * 60 * 60 * 1000;
 const sessions = new Map();
 const encoder = new TextEncoder();
