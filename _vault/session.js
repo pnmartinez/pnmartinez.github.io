@@ -1,0 +1,46 @@
+(() => {
+  'use strict';
+  const STORAGE = 'local-outreach.vault.session';
+  let leaving = false;
+  function locked() {
+    if (leaving) return;
+    leaving = true;
+    sessionStorage.removeItem(STORAGE);
+    document.documentElement.style.visibility = 'hidden';
+    location.replace('/_vault/gate.html?next=' + encodeURIComponent(location.pathname + location.search + location.hash));
+  }
+  navigator.serviceWorker.addEventListener('message', ({data}) => {if (data?.type === 'LOCKED') locked();});
+  async function check() {
+    const saved = JSON.parse(sessionStorage.getItem(STORAGE) || 'null');
+    if (!saved || saved.expires <= Date.now()) return locked();
+    const controller = navigator.serviceWorker.controller;
+    if (!controller) return location.reload();
+    const valid = await new Promise(resolve => {
+      const channel = new MessageChannel();
+      const timer = setTimeout(() => resolve(false), 3000);
+      channel.port1.onmessage = ({data}) => {clearTimeout(timer); channel.port1.close(); resolve(data.ok);};
+      controller.postMessage({type:'STATUS'}, [channel.port2]);
+    });
+    if (!valid) {location.reload(); return;}
+    document.documentElement.style.visibility = '';
+  }
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) document.documentElement.style.visibility = 'hidden';
+    check();
+  });
+  document.addEventListener('visibilitychange', () => {if (!document.hidden) check();});
+  window.addEventListener('DOMContentLoaded', () => {
+    const nav = document.createElement('nav');
+    nav.setAttribute('aria-label','Acceso privado');
+    nav.style.cssText = 'position:fixed;bottom:12px;left:12px;z-index:2147483647;display:flex;gap:1px;font:12px system-ui;box-shadow:0 1px 8px #0003;border:1px solid #fff5;border-radius:5px;overflow:hidden';
+    const home = document.createElement('a');
+    home.href = '/'; home.textContent = 'Índice';
+    const lock = document.createElement('button');
+    lock.type = 'button'; lock.textContent = 'Bloquear';
+    [home,lock].forEach(el => {el.style.cssText = 'border:0;padding:10px 12px;background:#20352c;color:#fff;text-decoration:none;cursor:pointer;font:inherit'; nav.appendChild(el);});
+    lock.addEventListener('click', () => {navigator.serviceWorker.controller?.postMessage({type:'LOCK'}); locked();});
+    document.body.appendChild(nav);
+    const saved = JSON.parse(sessionStorage.getItem(STORAGE) || 'null');
+    if (saved) setTimeout(locked, Math.max(0,saved.expires - Date.now()));
+  });
+})();
