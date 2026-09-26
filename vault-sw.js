@@ -4,6 +4,7 @@ const MAX_SESSION = 8 * 60 * 60 * 1000;
 const sessions = new Map();
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+let handoff = null;
 const privateHeaders = type => ({'Content-Type':type, 'Cache-Control':'no-store', 'X-Robots-Tag':'noindex, nofollow, noarchive', 'Referrer-Policy':'no-referrer', 'X-Content-Type-Options':'nosniff'});
 
 self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
@@ -15,9 +16,31 @@ async function decrypt(key, blob, aad) {
 }
 
 function sessionFor(id) {
+  if (!id) return null;
   const session = sessions.get(id);
   if (session && session.expires > Date.now()) return session;
   sessions.delete(id);
+  return null;
+}
+
+function attach(id, session) {
+  if (id && session) sessions.set(id, session);
+}
+
+function sessionForRequest(event) {
+  const found = sessionFor(event.clientId) || sessionFor(event.resultingClientId);
+  if (found) {
+    attach(event.resultingClientId, found);
+    return found;
+  }
+  const navigating = event.request.mode === 'navigate' || event.request.destination === 'document';
+  if (navigating && handoff && handoff.until > Date.now()) {
+    const session = handoff.session;
+    handoff = null;
+    attach(event.clientId, session);
+    attach(event.resultingClientId, session);
+    return session;
+  }
   return null;
 }
 
@@ -28,6 +51,7 @@ self.addEventListener('message', event => {
     const message = event.data || {};
     if (message.type === 'LOCK') {
       sessions.clear();
+      handoff = null;
       const clients = await self.clients.matchAll({type:'window'});
       clients.forEach(client => client.postMessage({type:'LOCKED'}));
       return respond({ok:true});
@@ -42,7 +66,11 @@ self.addEventListener('message', event => {
       if (manifest.build !== BUILD || !manifest.files['/index.html']) throw new Error('manifest');
       const expires = Math.min(Number(message.expires) || 0, Date.now() + MAX_SESSION);
       if (expires <= Date.now()) throw new Error('expired');
-      sessions.set(event.source.id, {key:message.key, manifest, expires});
+      const session = {key:message.key, manifest, expires};
+      sessions.set(event.source.id, session);
+      // The next same-tab navigation often arrives with an empty clientId
+      // (Firefox, Safari, and some Chrome reloads). One shot, then gone.
+      handoff = {session, until: Date.now() + 8000};
       respond({ok:true});
     } catch {
       respond({ok:false, error:message.build !== BUILD ? 'El sitio se ha actualizado. Recarga la página.' : 'Contraseña incorrecta o archivo no disponible.'});
@@ -54,8 +82,8 @@ async function handle(event) {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return fetch(event.request);
   if (url.pathname.startsWith('/_vault/') || ['/vault-sw.js','/robots.txt','/.nojekyll'].includes(url.pathname)) return fetch(event.request, {cache:'no-store'});
-  const session = sessionFor(event.clientId);
-  if (!session) return fetch(event.request, {cache:'no-store'}); // The server contains only the gate and ciphertext.
+  const session = sessionForRequest(event);
+  if (!session) return fetch(event.request, {cache:'no-store'});
   let path;
   try {path = decodeURIComponent(url.pathname);} catch {return new Response('Ruta no válida', {status:400});}
   if (path.endsWith('/')) path += 'index.html';
@@ -72,10 +100,9 @@ async function handle(event) {
     const response = await fetch('/_vault/data/' + entry.blob + '.bin', {cache:'no-store'});
     if (!response.ok) throw new Error('fetch');
     const content = await decrypt(session.key, await response.arrayBuffer(), BUILD + ':' + path);
-    if (sessionFor(event.clientId) !== session) throw new Error('locked');
-    if (event.resultingClientId) sessions.set(event.resultingClientId, session);
+    if (session.expires <= Date.now()) throw new Error('locked');
+    attach(event.resultingClientId, session);
     const headers = privateHeaders(entry.type);
-    // Binary assets (audio/video) may be requested with byte ranges.
     const range = event.request.headers.get('Range');
     if (range) {
       const match = /^bytes=(\d+)-(\d*)$/.exec(range);

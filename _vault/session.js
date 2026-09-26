@@ -2,6 +2,7 @@
   'use strict';
   const STORAGE = 'local-outreach.vault.session';
   let leaving = false;
+  const bytes = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
   function locked() {
     if (leaving) return;
     leaving = true;
@@ -9,20 +10,43 @@
     document.documentElement.style.visibility = 'hidden';
     location.replace('/_vault/gate.html?next=' + encodeURIComponent(location.pathname + location.search + location.hash));
   }
+  function rpc(controller, message, ms) {
+    return new Promise(resolve => {
+      const channel = new MessageChannel();
+      const timer = setTimeout(() => resolve(null), ms);
+      channel.port1.onmessage = ({data}) => {clearTimeout(timer); channel.port1.close(); resolve(data);};
+      controller.postMessage(message, [channel.port2]);
+    });
+  }
   navigator.serviceWorker.addEventListener('message', ({data}) => {if (data?.type === 'LOCKED') locked();});
+  async function controller() {
+    if (navigator.serviceWorker.controller) return navigator.serviceWorker.controller;
+    try {await navigator.serviceWorker.ready;} catch {return null;}
+    if (navigator.serviceWorker.controller) return navigator.serviceWorker.controller;
+    await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, {once:true}));
+    return navigator.serviceWorker.controller;
+  }
   async function check() {
     const saved = JSON.parse(sessionStorage.getItem(STORAGE) || 'null');
     if (!saved || saved.expires <= Date.now()) return locked();
-    const controller = navigator.serviceWorker.controller;
-    if (!controller) return location.reload();
-    const valid = await new Promise(resolve => {
-      const channel = new MessageChannel();
-      const timer = setTimeout(() => resolve(false), 3000);
-      channel.port1.onmessage = ({data}) => {clearTimeout(timer); channel.port1.close(); resolve(data.ok);};
-      controller.postMessage({type:'STATUS'}, [channel.port2]);
-    });
-    if (!valid) {location.reload(); return;}
+    const worker = await controller();
+    if (!worker) return locked();
+    let state = await rpc(worker, {type:'STATUS'}, 15000);
+    if (!state?.ok) {
+      try {
+        const key = await crypto.subtle.importKey('raw', bytes(saved.key), 'AES-GCM', false, ['decrypt']);
+        state = await rpc(worker, {type:'UNLOCK', key, build:saved.build, expires:saved.expires}, 30000);
+      } catch {
+        state = null;
+      }
+      if (!state?.ok) return locked();
+    }
     document.documentElement.style.visibility = '';
+    if (new URLSearchParams(location.search).get('ok') === '1') {
+      const clean = new URL(location.href);
+      clean.searchParams.delete('ok');
+      history.replaceState(null, '', clean.pathname + clean.search + clean.hash);
+    }
   }
   window.addEventListener('pageshow', event => {
     if (event.persisted) document.documentElement.style.visibility = 'hidden';

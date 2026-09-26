@@ -29,15 +29,19 @@ function destination() {
   return url.pathname + url.search + url.hash;
 }
 
+function openTarget(target) {
+  const url = new URL(target, location.origin);
+  // location.reload() on the gate is what looped: the next document request
+  // often has no clientId, the worker serves the gate again, and we retry.
+  if (url.href === location.href) url.searchParams.set('ok', '1');
+  location.replace(url.pathname + url.search + url.hash);
+}
+
 async function enter(raw, expires) {
   const key = await crypto.subtle.importKey('raw', bytes(raw), 'AES-GCM', false, ['decrypt']);
   await rpc({type: 'UNLOCK', key, build: config.id, expires});
   sessionStorage.setItem(STORAGE, JSON.stringify({key: raw, build: config.id, expires}));
-  const target = destination();
-  // Replacing an identical URL with a fragment is only a same-document navigation.
-  // Force a request so the worker can return the decrypted page in that case.
-  if (new URL(target, location.origin).href === location.href) location.reload();
-  else location.replace(target);
+  openTarget(destination());
 }
 
 async function prepare() {
@@ -45,10 +49,9 @@ async function prepare() {
   const response = await fetch('/_vault/config.json', {cache: 'no-store'});
   if (!response.ok) throw new Error('No se pudo preparar el acceso. Recarga la página.');
   config = await response.json();
-  const registration = await navigator.serviceWorker.register('/vault-sw.js', {scope: '/', updateViaCache: 'none'});
+  const registration = await navigator.serviceWorker.register('/vault-sw.js?v=2', {scope: '/', updateViaCache: 'none'});
   await registration.update();
   await navigator.serviceWorker.ready;
-  // A new deployment may replace an older active worker. Wait for its activation.
   const pending = registration.installing || registration.waiting;
   if (pending && pending.state !== 'activated') await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Recarga la página para actualizar el acceso.')), 20000);
@@ -59,8 +62,12 @@ async function prepare() {
   });
   if (!navigator.serviceWorker.controller) await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, {once:true}));
   worker = navigator.serviceWorker.controller;
+  const bounced = new URLSearchParams(location.search).get('ok') === '1';
   const saved = JSON.parse(sessionStorage.getItem(STORAGE) || 'null');
-  if (saved && saved.build === config.id && saved.expires > Date.now()) {
+  if (bounced) {
+    sessionStorage.removeItem(STORAGE);
+    status.textContent = 'No se pudo abrir el archivo. Introduce la contraseña de nuevo.';
+  } else if (saved && saved.build === config.id && saved.expires > Date.now()) {
     try {await enter(saved.key, saved.expires); return;} catch {sessionStorage.removeItem(STORAGE);}
   }
   button.disabled = false;
@@ -74,7 +81,7 @@ form.addEventListener('submit', async event => {
   status.textContent = 'Abriendo…';
   try {
     const input = document.querySelector('#password');
-    const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(input.value), 'PBKDF2', false, ['deriveBits']);
+    const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(input.value.trim()), 'PBKDF2', false, ['deriveBits']);
     const raw = await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:bytes(config.salt), iterations:config.iterations}, material, 256);
     input.value = '';
     await enter(base64(raw), Date.now() + config.sessionMs);
