@@ -1,5 +1,5 @@
 'use strict';
-const BUILD = '5cd8f07eabe67e3f513c6e04a234851f';
+const BUILD = '65ba790be934dcaf53cdcd13fdaded08';
 const MAX_SESSION = 8 * 60 * 60 * 1000;
 const sessions = new Map();
 const encoder = new TextEncoder();
@@ -31,14 +31,15 @@ function sessionForRequest(event) {
   const found = sessionFor(event.clientId) || sessionFor(event.resultingClientId);
   if (found) {
     attach(event.resultingClientId, found);
+    handoff = {session: found, until: Date.now() + 15000};
     return found;
   }
   const navigating = event.request.mode === 'navigate' || event.request.destination === 'document';
   if (navigating && handoff && handoff.until > Date.now()) {
     const session = handoff.session;
-    handoff = null;
     attach(event.clientId, session);
     attach(event.resultingClientId, session);
+    handoff = {session, until: Date.now() + 15000};
     return session;
   }
   return null;
@@ -83,7 +84,11 @@ async function handle(event) {
   if (url.origin !== self.location.origin) return fetch(event.request);
   if (url.pathname.startsWith('/_vault/') || ['/vault-sw.js','/robots.txt','/.nojekyll'].includes(url.pathname)) return fetch(event.request, {cache:'no-store'});
   const session = sessionForRequest(event);
-  if (!session) return fetch(event.request, {cache:'no-store'});
+  if (!session) {
+    const navigating = event.request.mode === 'navigate' || event.request.destination === 'document';
+    if (navigating) return fetch('/_vault/restore.html', {cache:'no-store'});
+    return fetch(event.request, {cache:'no-store'});
+  }
   let path;
   try {path = decodeURIComponent(url.pathname);} catch {return new Response('Ruta no válida', {status:400});}
   if (path.endsWith('/')) path += 'index.html';

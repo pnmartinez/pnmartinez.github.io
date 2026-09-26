@@ -49,7 +49,7 @@ async function prepare() {
   const response = await fetch('/_vault/config.json', {cache: 'no-store'});
   if (!response.ok) throw new Error('No se pudo preparar el acceso. Recarga la página.');
   config = await response.json();
-  const registration = await navigator.serviceWorker.register('/vault-sw.js?v=2', {scope: '/', updateViaCache: 'none'});
+  const registration = await navigator.serviceWorker.register('/vault-sw.js?v=3', {scope: '/', updateViaCache: 'none'});
   await registration.update();
   await navigator.serviceWorker.ready;
   const pending = registration.installing || registration.waiting;

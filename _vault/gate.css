@@ -1,4 +1,5 @@
 :root{color-scheme:light;--paper:#f5f2eb;--ink:#20352c;--muted:#606c62;--accent:#c45b38}
+html.restoring body{visibility:hidden}
 *{box-sizing:border-box}body{margin:0;min-height:100svh;background:var(--paper);color:var(--ink);font-family:system-ui,sans-serif;display:grid;grid-template-columns:1.1fr 1fr}
 main{width:min(600px,100%);margin:auto;padding:56px 48px}.brand{font-size:12px;font-weight:750;letter-spacing:.17em;display:flex;gap:12px;align-items:center}.brand span{font-size:32px;color:var(--accent)}
 .eyebrow{font-size:10px;letter-spacing:.2em;margin:76px 0 20px;color:var(--muted)}h1{font-family:Georgia,serif;font-size:clamp(40px,4.2vw,64px);line-height:1.06;font-weight:400;letter-spacing:-.045em;margin:0 0 24px}.intro{line-height:1.6;font-size:15px;color:var(--muted);max-width:330px}
